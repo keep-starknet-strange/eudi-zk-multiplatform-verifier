@@ -167,6 +167,8 @@
     <string name="pid_given_name_birth">Birth Given Name(s)</string>
     <string name="pid_place_of_birth">Place of Birth</string>
     <string name="pid_trust_anchor">Trust Anchor</string>
+    <string name="pid_age_over">Age Over %1$d</string>
+    <string name="pid_nationality_in_set">Nationality In Set</string>
 
     <string name="mdl_family_name">Family Name(s)</string>
     <string name="mdl_given_name">Given Name(s)</string>

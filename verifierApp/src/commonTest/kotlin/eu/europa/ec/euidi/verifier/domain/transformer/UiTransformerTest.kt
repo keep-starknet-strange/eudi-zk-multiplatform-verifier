@@ -17,9 +17,11 @@
 package eu.europa.ec.euidi.verifier.domain.transformer
 
 import dev.mokkery.answering.calls
+import dev.mokkery.answering.returns
 import dev.mokkery.every
 import dev.mokkery.matcher.any
 import dev.mokkery.mock
+import dev.mokkery.verify
 import eu.europa.ec.euidi.verifier.core.provider.ResourceProvider
 import eu.europa.ec.euidi.verifier.domain.config.model.AttestationType
 import eu.europa.ec.euidi.verifier.domain.config.model.ClaimItem
@@ -28,6 +30,9 @@ import eu.europa.ec.euidi.verifier.presentation.component.ListItemLeadingContent
 import eu.europa.ec.euidi.verifier.presentation.component.ListItemMainContentDataUi
 import eu.europa.ec.euidi.verifier.presentation.component.ListItemTrailingContentDataUi
 import eu.europa.ec.euidi.verifier.testutil.TestData
+import eudiverifier.verifierapp.generated.resources.Res
+import eudiverifier.verifierapp.generated.resources.pid_age_over
+import eudiverifier.verifierapp.generated.resources.pid_nationality_in_set
 import org.jetbrains.compose.resources.StringResource
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -155,6 +160,43 @@ class UiTransformerTest {
         )
 
         assertEquals("no_such_claim_key", result)
+    }
+
+    @Test
+    fun `getClaimTranslation resolves a dynamic age_over predicate with its threshold`() {
+        val provider: ResourceProvider = mock {
+            every { getSharedString(any()) } calls { (_: StringResource) -> "label" }
+            every { getSharedString(Res.string.pid_age_over, *any()) } returns "Age Over 21"
+        }
+
+        val result = UiTransformer.getClaimTranslation(
+            attestationType = "PID",
+            claimLabel = "age_over_21",
+            resourceProvider = provider,
+        )
+
+        assertEquals("Age Over 21", result)
+        verify { provider.getSharedString(Res.string.pid_age_over, 21) }
+    }
+
+    @Test
+    fun `getClaimTranslation resolves the nationality_in_set predicate`() {
+        val provider: ResourceProvider = mock {
+            every { getSharedString(any()) } calls { (resource: StringResource) ->
+                when (resource) {
+                    Res.string.pid_nationality_in_set -> "Nationality In Set"
+                    else -> "label"
+                }
+            }
+        }
+
+        val result = UiTransformer.getClaimTranslation(
+            attestationType = "PID",
+            claimLabel = "nationality_in_set",
+            resourceProvider = provider,
+        )
+
+        assertEquals("Nationality In Set", result)
     }
 
     //endregion

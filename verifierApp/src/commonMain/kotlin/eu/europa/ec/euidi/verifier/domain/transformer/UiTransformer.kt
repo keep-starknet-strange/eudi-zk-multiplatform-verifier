@@ -32,9 +32,17 @@ import eu.europa.ec.euidi.verifier.presentation.model.ReceivedDocumentUi
 import eudiverifier.verifierapp.generated.resources.Res
 import eudiverifier.verifierapp.generated.resources.allStringResources
 import eudiverifier.verifierapp.generated.resources.custom_request_zk_claim_suffix
+import eudiverifier.verifierapp.generated.resources.pid_age_over
+import eudiverifier.verifierapp.generated.resources.pid_nationality_in_set
 import org.jetbrains.compose.resources.StringResource
 
 object UiTransformer {
+
+    /** Matches the dynamic age-predicate claim id `age_over_<n>` and captures the threshold. */
+    private val ageOverClaimRegex = Regex("""age_over_(\d+)""")
+
+    /** Synthetic result claim id for the nationality set-membership predicate. */
+    private const val NATIONALITY_IN_SET_CLAIM = "nationality_in_set"
 
     fun transformToUiItems(
         fields: List<ClaimItem>,
@@ -140,11 +148,33 @@ object UiTransformer {
         val resourceKey = "${attestationType.replace(" ", "_")}_${claimLabel}".lowercase()
 
         val resource = allStringResources[resourceKey]
-        return if (resource != null) {
-            resourceProvider.getSharedString(resource)
-        } else {
-            claimLabel
+        return when {
+            resource != null -> resourceProvider.getSharedString(resource)
+            // ZK predicate claims carry a dynamic threshold/set (e.g. age_over_21), so there is
+            // no exact per-value resource for them; resolve them to a readable, localized label.
+            else -> resolveZkPredicateClaim(claimLabel, resourceProvider) ?: claimLabel
         }
+    }
+
+    /**
+     * Resolves a zero-knowledge predicate claim id to a localized label, or null if [claimLabel] is
+     * not a recognised predicate. The asserted result claims surfaced by a ZK proof — `age_over_<n>`
+     * (variable threshold) and `nationality_in_set` — have no fixed string resource, so they would
+     * otherwise fall back to their raw, machine-style id.
+     */
+    private fun resolveZkPredicateClaim(
+        claimLabel: String,
+        resourceProvider: ResourceProvider,
+    ): String? {
+        ageOverClaimRegex.matchEntire(claimLabel)?.groupValues?.get(1)?.toIntOrNull()?.let { years ->
+            return resourceProvider.getSharedString(Res.string.pid_age_over, years)
+        }
+
+        if (claimLabel == NATIONALITY_IN_SET_CLAIM) {
+            return resourceProvider.getSharedString(Res.string.pid_nationality_in_set)
+        }
+
+        return null
     }
 
     fun keyIsPortrait(key: String): Boolean {
