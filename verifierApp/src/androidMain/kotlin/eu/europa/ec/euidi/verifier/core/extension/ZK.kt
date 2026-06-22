@@ -46,46 +46,20 @@ import kotlin.time.ExperimentalTime
  */
 internal fun RequestedDocumentUi.intoZkSystemSpecs(): List<ZkSystemSpec> {
     val contract = zkContractV1()
-    if (this.documentType.docType != contract.doctypePid) return emptyList()
-
-    // Pair each selected ZK predicate with its (attribute label, operator-supplied value).
-    val zkPredicates = this.claims.mapNotNull { claim ->
-        (claim.kind as? ClaimKind.Zk)?.let { claim.label to it.value }
-    }
-    if (zkPredicates.isEmpty()) return emptyList()
-
-    var minAge: Long? = null
-    var acceptedCountries: String? = null
-
-    zkPredicates.forEach { (label, value) ->
-        when (label) {
-            contract.elementBirthDate ->
-                (value as? ZkPredicateValue.AgeOver)?.let { minAge = it.years.toLong() }
-
-            contract.elementNationality ->
-                (value as? ZkPredicateValue.NationalityIn)
-                    ?.countries
-                    ?.mapNotNull { isoAlpha2ToNumeric(it) }
-                    ?.takeIf { it.isNotEmpty() }
-                    ?.let { acceptedCountries = it.joinToString(",") }
-        }
-    }
-
-    val wantsAge = minAge != null
-    val wantsNat = acceptedCountries != null
-    // No parameter resolved to a usable value → the predicate is not valid, so request no ZK.
-    if (!wantsAge && !wantsNat) return emptyList()
+    val inputs = this.requestedZkInputs() ?: return emptyList()
 
     val mode = when {
-        wantsAge && wantsNat -> PredicateMode.AND
-        wantsAge -> PredicateMode.AGE
+        inputs.wantsAge && inputs.wantsNat -> PredicateMode.AND
+        inputs.wantsAge -> PredicateMode.AGE
         else -> PredicateMode.NAT
     }
 
     val spec = ZkSystemSpec(id = contract.specIdPid, system = contract.systemName).apply {
         addParam(contract.paramPredicateMode, predicateModeToken(mode))
-        minAge?.let { addParam(contract.paramMinAge, it) }
-        acceptedCountries?.let { addParam(contract.paramAcceptedCountries, it) }
+        inputs.minAge?.let { addParam(contract.paramMinAge, it.toLong()) }
+        if (inputs.wantsNat) {
+            addParam(contract.paramAcceptedCountries, inputs.acceptedCountries.joinToString(","))
+        }
         addParam(contract.paramVersion, 1L)
         addParam(contract.paramNumAttributes, 2L)
     }
@@ -93,31 +67,96 @@ internal fun RequestedDocumentUi.intoZkSystemSpecs(): List<ZkSystemSpec> {
 }
 
 /**
+ * The verifier-supplied public inputs of a ZK predicate request: the age threshold and the accepted
+ * nationality set (numeric ISO-3166 codes, in request order). These define what the proof must
+ * satisfy. They are derived only from the request — never echoed back by the prover — so the
+ * verifier alone fixes the bar; see [requestedZkInputsBySpecId].
+ */
+internal data class RequestedZkInputs(
+    val minAge: UInt?,
+    val acceptedCountries: List<UInt>,
+) {
+    val wantsAge: Boolean get() = minAge != null
+    val wantsNat: Boolean get() = acceptedCountries.isNotEmpty()
+}
+
+/**
+ * Extracts the ZK predicate inputs this PID request carries, or null when it requests no usable
+ * predicate. Used both to build the spec (what we ask the wallet to prove) and to reconstruct the
+ * statement at verification time (what we check the proof against), so the two cannot drift.
+ */
+private fun RequestedDocumentUi.requestedZkInputs(): RequestedZkInputs? {
+    val contract = zkContractV1()
+    if (this.documentType.docType != contract.doctypePid) return null
+
+    // Pair each selected ZK predicate with its (attribute label, operator-supplied value).
+    val zkPredicates = this.claims.mapNotNull { claim ->
+        (claim.kind as? ClaimKind.Zk)?.let { claim.label to it.value }
+    }
+    if (zkPredicates.isEmpty()) return null
+
+    val minAge: UInt? = zkPredicates.firstNotNullOfOrNull { (label, value) ->
+        if (label == contract.elementBirthDate) {
+            (value as? ZkPredicateValue.AgeOver)?.years?.toUInt()
+        } else {
+            null
+        }
+    }
+    val acceptedCountries: List<UInt> = zkPredicates.firstNotNullOfOrNull { (label, value) ->
+        if (label == contract.elementNationality) {
+            (value as? ZkPredicateValue.NationalityIn)?.countries
+        } else {
+            null
+        }
+    }?.mapNotNull { isoAlpha2ToNumeric(it) }.orEmpty()
+
+    // No parameter resolved to a usable value → the predicate is not valid, so request no ZK.
+    return if (minAge == null && acceptedCountries.isEmpty()) {
+        null
+    } else {
+        RequestedZkInputs(minAge = minAge, acceptedCountries = acceptedCountries)
+    }
+}
+
+/**
+ * Maps each requested ZK spec id to the predicate inputs the verifier asked for, so that
+ * [verifiedZKDocuments] can supply them as the proof's public inputs. Correlation by spec id is
+ * required because neither the threshold nor the accepted set is carried back in the response —
+ * and trusting the prover for them would let a wallet satisfy a weaker predicate than required.
+ */
+internal fun List<RequestedDocumentUi>.requestedZkInputsBySpecId(): Map<String, RequestedZkInputs> {
+    val contract = zkContractV1()
+    val inputs = this.firstNotNullOfOrNull { it.requestedZkInputs() } ?: return emptyMap()
+    return mapOf(contract.specIdPid to inputs)
+}
+
+/**
  * Verifies the Zero-Knowledge proofs in a response and maps them to received documents.
  *
  * For each [ZkDocument] we reconstruct the public statement the wallet proved against — issuer key
  * from the proof's cert chain, `today` from the proof timestamp, the nonce from the session
- * transcript, and the predicate (mode/threshold/accepted-set) from the asserted result claims plus
- * our request defaults — then ask the SDK to verify the proof. The asserted boolean claims
- * (e.g. `age_over_18`, `nationality_in_set`) are surfaced as the document's claims.
+ * transcript, and the predicate inputs (mode, age threshold, accepted nationality set) from
+ * [requestedInputsBySpecId] (correlated by spec id). The predicate inputs come from the verifier's
+ * request, NOT from the prover's asserted claims: taking the threshold/set from the response would
+ * let a wallet relabel its result (e.g. prove `age_over_18` when `age_over_21` was required) and
+ * have it accepted. The asserted boolean claims are surfaced only as the document's display claims.
  */
 @OptIn(ExperimentalTime::class)
-internal fun DeviceResponse.verifiedZKDocuments(): List<ReceivedDocumentDomain> {
+internal fun DeviceResponse.verifiedZKDocuments(
+    requestedInputsBySpecId: Map<String, RequestedZkInputs> = emptyMap(),
+): List<ReceivedDocumentDomain> {
     val contract = zkContractV1()
     return deviceResponse.zkDocuments.mapNotNull { zkDoc ->
         val data = zkDoc.documentData
         val resultClaims = data.issuerSigned[contract.pidNamespace] ?: return@mapNotNull null
 
-        val natPresent = resultClaims.containsKey(contract.resultNatInSet)
-        val minAge = resultClaims.keys
-            .firstOrNull { it.startsWith("age_over_") }
-            ?.removePrefix("age_over_")
-            ?.toUIntOrNull()
-        val agePresent = minAge != null
-
         val issuerKey = data.msoX5chain?.certificates?.firstOrNull()?.ecPublicKey
                 as? EcPublicKeyDoubleCoordinate
             ?: return@mapNotNull null
+
+        // The predicate to verify against is the one WE requested for this spec, never what the
+        // prover asserted. A document for a spec we never requested has no inputs → it cannot verify.
+        val requested = requestedInputsBySpecId[data.zkSystemSpecId]
 
         val statement = ZkPublicStatement(
             specId = data.zkSystemSpecId,
@@ -129,15 +168,12 @@ internal fun DeviceResponse.verifiedZKDocuments(): List<ReceivedDocumentDomain> 
             todayEpochDay = (data.timestamp.epochSeconds / 86_400L).toInt(),
             nonce = sessionTranscript,
             predicateMode = when {
-                agePresent && natPresent -> PredicateMode.AND
-                agePresent -> PredicateMode.AGE
+                requested?.wantsAge == true && requested.wantsNat -> PredicateMode.AND
+                requested?.wantsAge == true -> PredicateMode.AGE
                 else -> PredicateMode.NAT
             },
-            ageThresholdYears = if (agePresent) minAge else null,
-            // The accepted nationality set is not carried in the response and there is no default.
-            // It must be correlated from the original request (by zkSystemSpecId) before a
-            // nationality predicate can be reconstructed; until then a NAT/AND proof cannot verify.
-            acceptedNumericCountries = null,
+            ageThresholdYears = requested?.minAge,
+            acceptedNumericCountries = requested?.acceptedCountries?.takeIf { it.isNotEmpty() },
             natMode = NatMode.ANY,
         )
 
