@@ -21,6 +21,7 @@ import com.kss.euid.zk.sdk.PredicateMode
 import com.kss.euid.zk.sdk.ZkPublicStatement
 import com.kss.euid.zk.sdk.isoAlpha2ToNumeric
 import com.kss.euid.zk.sdk.predicateModeToken
+import com.kss.euid.zk.sdk.resultAgeOver
 import com.kss.euid.zk.sdk.verifyIdentity
 import com.kss.euid.zk.sdk.zkContractV1
 import eu.europa.ec.eudi.verifier.core.response.DeviceResponse
@@ -158,6 +159,17 @@ internal fun DeviceResponse.verifiedZKDocuments(
         // prover asserted. A document for a spec we never requested has no inputs → it cannot verify.
         val requested = requestedInputsBySpecId[data.zkSystemSpecId]
 
+        // Every predicate we asked to be proven must actually be asserted in the response. The proof
+        // binds the predicate mode, but the asserted result claims are separate metadata, so a wallet
+        // could answer (say) an age+nationality request with nationality only. Require each requested
+        // predicate's result claim to be present, otherwise the response is incomplete → not trusted.
+        val requiredResultKeys = buildSet {
+            requested?.minAge?.let { add(resultAgeOver(it)) }
+            if (requested?.wantsNat == true) add(contract.resultNatInSet)
+        }
+        val requestedPredicatesPresent =
+            requested != null && resultClaims.keys.containsAll(requiredResultKeys)
+
         val statement = ZkPublicStatement(
             specId = data.zkSystemSpecId,
             version = 1u,
@@ -177,7 +189,7 @@ internal fun DeviceResponse.verifiedZKDocuments(
             natMode = NatMode.ANY,
         )
 
-        val verified = runCatching {
+        val verified = requestedPredicatesPresent && runCatching {
             verifyIdentity(statement = statement, proof = zkDoc.proof.toByteArray()).ok
         }.getOrDefault(false)
 
