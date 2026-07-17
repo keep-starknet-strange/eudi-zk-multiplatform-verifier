@@ -19,6 +19,7 @@ package eu.europa.ec.euidi.verifier.core.extension
 import com.kss.euid.zk.sdk.NatMode
 import com.kss.euid.zk.sdk.PredicateMode
 import com.kss.euid.zk.sdk.ZkPublicStatement
+import com.kss.euid.zk.sdk.demoIssuerPublicKey
 import com.kss.euid.zk.sdk.isoAlpha2ToNumeric
 import com.kss.euid.zk.sdk.predicateModeToken
 import com.kss.euid.zk.sdk.resultAgeOver
@@ -31,7 +32,6 @@ import eu.europa.ec.euidi.verifier.domain.config.model.ZkPredicateValue
 import eu.europa.ec.euidi.verifier.domain.model.DocumentValidityDomain
 import eu.europa.ec.euidi.verifier.domain.model.ReceivedDocumentDomain
 import eu.europa.ec.euidi.verifier.presentation.model.RequestedDocumentUi
-import org.multipaz.crypto.EcPublicKeyDoubleCoordinate
 import org.multipaz.mdoc.zkp.ZkDocument
 import org.multipaz.mdoc.zkp.ZkSystemSpec
 import kotlin.time.ExperimentalTime
@@ -134,9 +134,10 @@ internal fun List<RequestedDocumentUi>.requestedZkInputsBySpecId(): Map<String, 
 /**
  * Verifies the Zero-Knowledge proofs in a response and maps them to received documents.
  *
- * For each [ZkDocument] we reconstruct the public statement the wallet proved against — issuer key
- * from the proof's cert chain, `today` from the proof timestamp, the nonce from the session
- * transcript, and the predicate inputs (mode, age threshold, accepted nationality set) from
+ * For each [ZkDocument] we reconstruct the public statement the wallet proved against — the issuer
+ * key hash pinned from the verifier's own trust store (the PQ mdoc carries no x5chain), `today` from
+ * the proof timestamp, the nonce from the session transcript, and the predicate inputs (mode, age
+ * threshold, accepted nationality set) from
  * [requestedInputsBySpecId] (correlated by spec id). The predicate inputs come from the verifier's
  * request, NOT from the prover's asserted claims: taking the threshold/set from the response would
  * let a wallet relabel its result (e.g. prove `age_over_18` when `age_over_21` was required) and
@@ -150,10 +151,6 @@ internal fun DeviceResponse.verifiedZKDocuments(
     return deviceResponse.zkDocuments.mapNotNull { zkDoc ->
         val data = zkDoc.documentData
         val resultClaims = data.issuerSigned[contract.pidNamespace] ?: return@mapNotNull null
-
-        val issuerKey = data.msoX5chain?.certificates?.firstOrNull()?.ecPublicKey
-                as? EcPublicKeyDoubleCoordinate
-            ?: return@mapNotNull null
 
         // The predicate to verify against is the one WE requested for this spec, never what the
         // prover asserted. A document for a spec we never requested has no inputs → it cannot verify.
@@ -175,8 +172,7 @@ internal fun DeviceResponse.verifiedZKDocuments(
             version = 1u,
             doctype = contract.doctypePid,
             namespace = contract.pidNamespace,
-            issuerKeyX = issuerKey.x,
-            issuerKeyY = issuerKey.y,
+            issuerPublicKeyHash = java.security.MessageDigest.getInstance("SHA-256").digest(demoIssuerPublicKey()),
             todayEpochDay = (data.timestamp.epochSeconds / 86_400L).toInt(),
             nonce = sessionTranscript,
             predicateMode = when {
@@ -201,7 +197,7 @@ internal fun DeviceResponse.verifiedZKDocuments(
             },
             validity = DocumentValidityDomain(
                 isDeviceSignatureValid = null,
-                // The ZK proof attests the issuer (P-256/SHA-256) signature over the predicate.
+                // The ZK proof attests the issuer (ML-DSA-65/SHA-256) signature over the predicate.
                 isIssuerSignatureValid = verified,
                 isDataIntegrityIntact = verified,
                 signed = null,
