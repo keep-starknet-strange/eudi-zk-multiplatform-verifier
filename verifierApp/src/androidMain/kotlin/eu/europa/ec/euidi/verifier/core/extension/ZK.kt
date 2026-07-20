@@ -16,15 +16,19 @@
 
 package eu.europa.ec.euidi.verifier.core.extension
 
+import com.kss.euid.zk.sdk.IssuerKey
 import com.kss.euid.zk.sdk.NatMode
 import com.kss.euid.zk.sdk.PredicateMode
 import com.kss.euid.zk.sdk.ZkPublicStatement
+import com.kss.euid.zk.sdk.ZkSystemKind
 import com.kss.euid.zk.sdk.demoIssuerPublicKey
 import com.kss.euid.zk.sdk.isoAlpha2ToNumeric
 import com.kss.euid.zk.sdk.predicateModeToken
 import com.kss.euid.zk.sdk.resultAgeOver
 import com.kss.euid.zk.sdk.verifyIdentity
 import com.kss.euid.zk.sdk.zkContractV1
+import com.kss.euid.zk.sdk.zkSystem
+import org.multipaz.crypto.EcPublicKeyDoubleCoordinate
 import eu.europa.ec.eudi.verifier.core.response.DeviceResponse
 import eu.europa.ec.euidi.verifier.domain.config.model.ClaimItem
 import eu.europa.ec.euidi.verifier.domain.config.model.ClaimKind
@@ -167,12 +171,28 @@ internal fun DeviceResponse.verifiedZKDocuments(
         val requestedPredicatesPresent =
             requested != null && resultClaims.keys.containsAll(requiredResultKeys)
 
+        // Issuer trust anchor for the linked ZK system: ML-DSA pins our own trusted issuer key hash
+        // (the PQ mdoc carries no x5chain); P-256 recovers the issuer key from the response's x5chain
+        // (a proof with no recoverable chain cannot be verified → skip it).
+        val issuerKey = when (zkSystem()) {
+            ZkSystemKind.ML_DSA ->
+                IssuerKey.MlDsa(
+                    java.security.MessageDigest.getInstance("SHA-256").digest(demoIssuerPublicKey())
+                )
+            ZkSystemKind.P256 -> {
+                val ec = data.msoX5chain?.certificates?.firstOrNull()?.ecPublicKey
+                    as? EcPublicKeyDoubleCoordinate
+                    ?: return@mapNotNull null
+                IssuerKey.P256(ec.x, ec.y)
+            }
+        }
+
         val statement = ZkPublicStatement(
             specId = data.zkSystemSpecId,
             version = 1u,
             doctype = contract.doctypePid,
             namespace = contract.pidNamespace,
-            issuerPublicKeyHash = java.security.MessageDigest.getInstance("SHA-256").digest(demoIssuerPublicKey()),
+            issuerKey = issuerKey,
             todayEpochDay = (data.timestamp.epochSeconds / 86_400L).toInt(),
             nonce = sessionTranscript,
             predicateMode = when {
