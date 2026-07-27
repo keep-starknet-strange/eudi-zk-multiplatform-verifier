@@ -113,6 +113,8 @@ class AndroidTransferController(
 
         transferManager = eudiVerifier.createTransferManager {
             addEngagementMethod(TransferConfig.EngagementMethod.QR, connectionMethods)
+            useBleL2CAP(useL2Cap)
+            clearBleCacheOnDisconnect(clearBleCache)
         }
 
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
