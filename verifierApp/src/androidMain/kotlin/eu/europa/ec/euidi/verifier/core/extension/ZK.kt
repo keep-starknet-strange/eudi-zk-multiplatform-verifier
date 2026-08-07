@@ -16,15 +16,20 @@
 
 package eu.europa.ec.euidi.verifier.core.extension
 
+import com.kss.euid.zk.sdk.IdentityStatement
 import com.kss.euid.zk.sdk.IssuerKey
 import com.kss.euid.zk.sdk.NatMode
 import com.kss.euid.zk.sdk.PredicateMode
+import com.kss.euid.zk.sdk.ProductPublicStatementV1
 import com.kss.euid.zk.sdk.ZkPublicStatement
 import com.kss.euid.zk.sdk.ZkSystemKind
 import com.kss.euid.zk.sdk.demoIssuerPublicKey
+import com.kss.euid.zk.sdk.demoRevocationEpoch
+import com.kss.euid.zk.sdk.demoRevocationPublicKey
 import com.kss.euid.zk.sdk.isoAlpha2ToNumeric
 import com.kss.euid.zk.sdk.predicateModeToken
 import com.kss.euid.zk.sdk.resultAgeOver
+import com.kss.euid.zk.sdk.ts13DemoCircuitHash
 import com.kss.euid.zk.sdk.verifyIdentity
 import com.kss.euid.zk.sdk.zkContractV1
 import com.kss.euid.zk.sdk.zkSystem
@@ -187,22 +192,26 @@ internal fun DeviceResponse.verifiedZKDocuments(
             }
         }
 
-        val statement = ZkPublicStatement(
-            specId = data.zkSystemSpecId,
-            version = 1u,
-            doctype = contract.doctypePid,
-            namespace = contract.pidNamespace,
-            issuerKey = issuerKey,
-            todayEpochDay = (data.timestamp.epochSeconds / 86_400L).toInt(),
-            nonce = sessionTranscript,
-            predicateMode = when {
-                requested?.wantsAge == true && requested.wantsNat -> PredicateMode.AND
-                requested?.wantsAge == true -> PredicateMode.AGE
-                else -> PredicateMode.NAT
-            },
-            ageThresholdYears = requested?.minAge,
-            acceptedNumericCountries = requested?.acceptedCountries?.takeIf { it.isNotEmpty() },
-            natMode = NatMode.ANY,
+        // ponytail: Ts13DemoV1 path — must build the SAME IdentityStatement the wallet proved (every
+        // field is bound into the proof context). The age-over element is OUR requested threshold
+        // (`requested.minAge`), so the verifier owns the value; the null sentinel below never verifies
+        // (no age request ⇒ requestedPredicatesPresent is false ⇒ verifyIdentity is skipped). NOTE: the
+        // circuit is fixed to age_over_18 on this branch, so only min_age 18 verifies for now.
+        // ML-DSA-only (issuerKey above is unused here). Flip back to ProductV1(...) for the flat P-256 SDK.
+        val statement = ZkPublicStatement.Ts13DemoV1(
+            IdentityStatement(
+                circuitHash = ts13DemoCircuitHash(),
+                zkSystemId = data.zkSystemSpecId,
+                documentType = contract.doctypePid,
+                namespace = contract.pidNamespace,
+                elementIdentifier = resultAgeOver(requested?.minAge ?: 0u),
+                expectedValueCbor = byteArrayOf(0xF5.toByte()), // CBOR true
+                timestampEpochSeconds = data.timestamp.epochSeconds,
+                sessionTranscript = sessionTranscript,
+                trustedIssuerPublicKey = demoIssuerPublicKey(),
+                revocationPublicKey = demoRevocationPublicKey(),
+                revocationEpoch = demoRevocationEpoch(),
+            ),
         )
 
         val verified = requestedPredicatesPresent && runCatching {
