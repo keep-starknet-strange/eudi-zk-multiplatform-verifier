@@ -24,6 +24,7 @@ import dev.mokkery.matcher.any
 import dev.mokkery.mock
 import eu.europa.ec.euidi.verifier.core.provider.ResourceProvider
 import eu.europa.ec.euidi.verifier.domain.model.DocumentValidityDomain
+import eu.europa.ec.euidi.verifier.presentation.component.ListItemMainContentDataUi
 import eu.europa.ec.euidi.verifier.testutil.sequentialUuidProvider
 import org.jetbrains.compose.resources.StringResource
 import kotlin.test.Test
@@ -66,7 +67,7 @@ class DocumentValidityMappersTest {
     }
 
     @Test
-    fun `toUi defaults null booleans to false and keeps null instants null`() {
+    fun `toUi preserves null booleans as not-applicable and keeps null instants null`() {
         val domain = DocumentValidityDomain(
             isDeviceSignatureValid = null,
             isIssuerSignatureValid = null,
@@ -78,9 +79,10 @@ class DocumentValidityMappersTest {
 
         val ui = domain.toUi()
 
-        assertEquals(false, ui.isDeviceSignatureValid)
-        assertEquals(false, ui.isIssuerSignatureValid)
-        assertEquals(false, ui.isDataIntegrityIntact)
+        // Null is "not applicable" (e.g. ZK proofs carry no device signature) — not coerced to false.
+        assertNull(ui.isDeviceSignatureValid)
+        assertNull(ui.isIssuerSignatureValid)
+        assertNull(ui.isDataIntegrityIntact)
         assertNull(ui.signed)
         assertNull(ui.validFrom)
         assertNull(ui.validUntil)
@@ -108,6 +110,27 @@ class DocumentValidityMappersTest {
 
         // 3 boolean items + signed + validUntil (validFrom is null and dropped) = 5
         assertEquals(5, items.size)
+    }
+
+    @Test
+    fun `toListItems renders a null boolean as not-applicable`() {
+        val ui = DocumentValidityUi(
+            isDeviceSignatureValid = null,   // not applicable (e.g. ZK proof)
+            isIssuerSignatureValid = true,
+            isDataIntegrityIntact = true,
+            signed = null,
+            validFrom = null,
+            validUntil = null,
+        )
+
+        val items = ui.toListItems(
+            resourceProvider = resourceProvider(),
+            uuidProvider = sequentialUuidProvider(),
+        )
+
+        val texts = items.map { (it.mainContentData as ListItemMainContentDataUi.Text).text }
+        assertTrue("N/A" in texts, "Expected a null boolean to render as N/A, got: $texts")
+        assertTrue("true" in texts, "Expected true booleans to still render, got: $texts")
     }
 
     @Test

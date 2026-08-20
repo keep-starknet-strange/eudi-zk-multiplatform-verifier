@@ -14,13 +14,9 @@
  * governing permissions and limitations under the Licence.
  */
 
-package eu.europa.ec.euidi.verifier.presentation.utils
+package eu.europa.ec.euidi.verifier.presentation.model
 
-object Constants {
-    const val REQUESTED_DOCUMENTS = "requestedDocuments"
-    const val RECEIVED_DOCUMENTS = "receivedDocuments"
-    const val SAVED_STATE_REQUESTED_DOCUMENT = "savedStateRequestedDocument"
-    const val SAVED_STATE_REQUESTED_DOCUMENTS = "savedStateRequestedDocuments"
-    const val COUNTRY_SELECTION_PRESELECTED = "countrySelectionPreselected"
-    const val COUNTRY_SELECTION_RESULT = "countrySelectionResult"
-}
+data class CountrySetUi(
+    val id: String,
+    val label: String,
+)

@@ -51,9 +51,11 @@ data class DocumentUi(
 
 @CommonParcelize
 data class DocumentValidityUi(
-    val isDeviceSignatureValid: Boolean,
-    val isIssuerSignatureValid: Boolean,
-    val isDataIntegrityIntact: Boolean,
+    // Nullable: a null check is "not applicable" (e.g. a ZK predicate proof carries no device
+    // signature), which is distinct from a present-but-failed check and renders as "N/A".
+    val isDeviceSignatureValid: Boolean?,
+    val isIssuerSignatureValid: Boolean?,
+    val isDataIntegrityIntact: Boolean?,
     val signed: String?,
     val validFrom: String?,
     val validUntil: String?,
@@ -61,9 +63,9 @@ data class DocumentValidityUi(
 
 fun DocumentValidityDomain.toUi(): DocumentValidityUi {
     return DocumentValidityUi(
-        isDeviceSignatureValid = isDeviceSignatureValid ?: false,
-        isIssuerSignatureValid = isIssuerSignatureValid ?: false,
-        isDataIntegrityIntact = isDataIntegrityIntact ?: false,
+        isDeviceSignatureValid = isDeviceSignatureValid,
+        isIssuerSignatureValid = isIssuerSignatureValid,
+        isDataIntegrityIntact = isDataIntegrityIntact,
         signed = signed?.toText(),
         validFrom = validFrom?.toText(),
         validUntil = validUntil?.toText(),
@@ -150,15 +152,18 @@ private fun Instant.toText(): String? {
 
 private fun buildBoolItem(
     id: String,
-    value: Boolean,
+    value: Boolean?,
     overlineText: String
 ): ListItemDataUi {
     return ListItemDataUi(
         itemId = id,
-        mainContentData = ListItemMainContentDataUi.Text(text = value.toString()),
+        // A null check does not apply to this document (e.g. no device signature in a ZK proof).
+        mainContentData = ListItemMainContentDataUi.Text(text = value?.toString() ?: NOT_APPLICABLE),
         overlineText = overlineText
     )
 }
+
+private const val NOT_APPLICABLE = "N/A"
 
 private fun buildStringItemOrNull(
     id: String,

@@ -23,6 +23,8 @@ import eu.europa.ec.euidi.verifier.core.provider.ResourceProvider
 import eu.europa.ec.euidi.verifier.core.provider.UuidProvider
 import eu.europa.ec.euidi.verifier.domain.config.ConfigProvider
 import eu.europa.ec.euidi.verifier.domain.config.ConfigProviderImpl
+import eu.europa.ec.euidi.verifier.domain.interactor.CountrySelectionInteractor
+import eu.europa.ec.euidi.verifier.domain.interactor.CountrySelectionInteractorImpl
 import eu.europa.ec.euidi.verifier.domain.interactor.CustomRequestInteractor
 import eu.europa.ec.euidi.verifier.domain.interactor.CustomRequestInteractorImpl
 import eu.europa.ec.euidi.verifier.domain.interactor.DocumentsToRequestInteractor
@@ -39,11 +41,24 @@ import eu.europa.ec.euidi.verifier.domain.interactor.ShowDocumentsInteractor
 import eu.europa.ec.euidi.verifier.domain.interactor.ShowDocumentsInteractorImpl
 import eu.europa.ec.euidi.verifier.domain.interactor.TransferStatusInteractor
 import eu.europa.ec.euidi.verifier.domain.interactor.TransferStatusInteractorImpl
+import eu.europa.ec.euidi.verifier.domain.interactor.ZkRequestInteractor
+import eu.europa.ec.euidi.verifier.domain.interactor.ZkRequestInteractorImpl
+import eu.europa.ec.euidi.verifier.domain.repository.CountryRepository
+import eu.europa.ec.euidi.verifier.domain.repository.CountryRepositoryImpl
 import org.koin.dsl.module
 
 val domainModule = module {
 
     single<ConfigProvider> { ConfigProviderImpl(get<PlatformController>()) }
+
+    single<CountryRepository> { CountryRepositoryImpl() }
+
+    factory<CountrySelectionInteractor> {
+        CountrySelectionInteractorImpl(
+            countryRepository = get<CountryRepository>(),
+            resourceProvider = get<ResourceProvider>()
+        )
+    }
 
     factory<HomeInteractor> {
         HomeInteractorImpl(
@@ -64,6 +79,13 @@ val domainModule = module {
         CustomRequestInteractorImpl(
             resourceProvider = get<ResourceProvider>(),
             configProvider = get<ConfigProvider>()
+        )
+    }
+
+    factory<ZkRequestInteractor> {
+        ZkRequestInteractorImpl(
+            configProvider = get<ConfigProvider>(),
+            resourceProvider = get<ResourceProvider>()
         )
     }
 

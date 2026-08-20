@@ -26,8 +26,12 @@ import eu.europa.ec.eudi.verifier.core.transfer.TransferConfig
 import eu.europa.ec.eudi.verifier.core.transfer.TransferEvent
 import eu.europa.ec.eudi.verifier.core.transfer.TransferManager
 import eu.europa.ec.euidi.verifier.core.extension.flattenedClaims
+import eu.europa.ec.euidi.verifier.core.extension.intoZkSystemSpecs
+import eu.europa.ec.euidi.verifier.core.extension.requestedZkInputsBySpecId
+import eu.europa.ec.euidi.verifier.core.extension.verifiedZKDocuments
 import eu.europa.ec.euidi.verifier.core.provider.ResourceProvider
 import eu.europa.ec.euidi.verifier.domain.config.model.ClaimItem
+import eu.europa.ec.euidi.verifier.domain.config.model.ClaimKind
 import eu.europa.ec.euidi.verifier.domain.config.model.Logger
 import eu.europa.ec.euidi.verifier.domain.model.DocumentValidityDomain
 import eu.europa.ec.euidi.verifier.domain.model.ReceivedDocumentDomain
@@ -109,6 +113,8 @@ class AndroidTransferController(
 
         transferManager = eudiVerifier.createTransferManager {
             addEngagementMethod(TransferConfig.EngagementMethod.QR, connectionMethods)
+            useBleL2CAP(useL2Cap)
+            clearBleCacheOnDisconnect(clearBleCache)
         }
 
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -202,9 +208,15 @@ class AndroidTransferController(
                                             .awaitAll()
                                     }
 
+                                    val zkReceivedDocuments = event.response.verifiedZKDocuments(
+                                        requestedInputsBySpecId = requestedDocs.requestedZkInputsBySpecId()
+                                    )
+
                                     tryEmit(
                                         TransferStatus.OnResponseReceived(
-                                            receivedDocs = ReceivedDocumentsDomain(documents = receivedDocuments)
+                                            receivedDocs = ReceivedDocumentsDomain(
+                                                documents = receivedDocuments + zkReceivedDocuments
+                                            )
                                         )
                                     )
 
@@ -255,18 +267,29 @@ class AndroidTransferController(
     private fun RequestedDocumentUi.transformToDocRequest(
         retainData: Boolean
     ): DocRequest {
-        val requestedClaims: Map<String, Boolean> = this
+        val disclosureClaims: Map<String, Boolean> = this
             .claims
+            .filter { claimItem: ClaimItem -> claimItem.kind is ClaimKind.Disclosure }
             .associate { claimItem: ClaimItem ->
                 claimItem.label to retainData
             }
+
+        val zkClaims: Map<String, Boolean> = this
+            .claims
+            .filter { claimItem: ClaimItem -> claimItem.kind is ClaimKind.Zk }
+            .associate { claimItem: ClaimItem ->
+                claimItem.label to false
+            }
+
+        val requestedClaims = disclosureClaims + zkClaims
 
         return DocRequest(
             docType = this.documentType.docType,
             itemsRequest = mapOf(
                 this.documentType.namespace to requestedClaims
             ),
-            readerAuthCertificate = null
+            readerAuthCertificate = null,
+            zkSystemSpecs = this.intoZkSystemSpecs(),
         )
     }
 
